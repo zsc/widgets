@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SDE Simulation: Monte Carlo vs FDM</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .container {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .chart-container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            padding: 15px;
+        }
+        .controls {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            margin: 20px auto;
+            width: 90%;
+            max-width: 500px;
+            background-color: white;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .control-row {
+            display: flex;
+            width: 100%;
+            justify-content: space-between;
+            align-items: center;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 4px;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .fdm-grid {
+            position: relative;
+        }
+        .tooltip {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .parameter-display {
+            margin-top: 10px;
+            color: #333;
+            text-align: center;
+        }
+        select, input {
+            padding: 5px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+        label {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>SDE Simulation: Monte Carlo vs FDM</h1>
+    <div class="container">
+        <div class="chart-container">
+            <h2>Monte Carlo Simulation</h2>
+            <div id="monte-carlo"></div>
+        </div>
+        <div class="chart-container">
+            <h2>Finite Difference Method (FDM)</h2>
+            <div id="fdm-grid"></div>
+        </div>
+    </div>
+    
+    <div class="controls">
+        <div class="control-row">
+            <button id="start-button">Start Simulation</button>
+            <button id="pause-button" disabled>Pause</button>
+            <button id="reset-button">Reset</button>
+        </div>
+        <div class="control-row">
+            <label for="sde-type">SDE Type:</label>
+            <select id="sde-type">
+                <option value="ornstein-uhlenbeck">Ornstein-Uhlenbeck</option>
+                <option value="geometric-brownian">Geometric Brownian Motion</option>
+                <option value="double-well">Double Well Potential</option>
+            </select>
+        </div>
+        <div class="control-row">
+            <label for="num-particles">Number of Particles:</label>
+            <input type="range" id="num-particles" min="100" max="2000" value="500" step="100">
+            <span id="particles-value">500</span>
+        </div>
+        <div class="control-row">
+            <label for="diffusion">Diffusion Strength:</label>
+            <input type="range" id="diffusion" min="0.1" max="2" value="0.8" step="0.1">
+            <span id="diffusion-value">0.8</span>
+        </div>
+        <div class="control-row">
+            <label for="drift">Drift Strength:</label>
+            <input type="range" id="drift" min="0.1" max="2" value="1" step="0.1">
+            <span id="drift-value">1.0</span>
+        </div>
+        <div class="parameter-display" id="parameter-display">
+            Current SDE: dX = a₁(X,Y)dt + b₁(X,Y)dW₁, dY = a₂(X,Y)dt + b₂(X,Y)dW₂
+        </div>
+    </div>
+    
+    <script>
+      /* 蒙特卡洛博士微笑着，愉快地进入她的专长领域。“SDEs的蒙特卡洛模拟提供了一种通过模拟系统可能遵循的许多样本路径来数值近似系统行为的方法。让我们考虑离散时间步长$$t_n = n\Delta t$$，其中$$n = 0, 1, 2, \ldots$$，$$\Delta t$$是时间步长。我们旨在在这些离散时间点近似SDEs的解。欧拉-马鲁亚马方法是这种模拟的常用选择，它近似解$$X_{t}$$和$$Y_{t}$$如下：
+
+从初始条件$$X_{0} = x_0$$和$$Y_{0} = y_0$$开始，时间步长$$t_{n+1} = t_n + \Delta t$$的近似解为：
+$$
+X_{t_{n+1}} \approx X_{t_n} + a_1(X_{t_n}, Y_{t_n}, t_n) \Delta t + b_1(X_{t_n}, Y_{t_n}, t_n) \left( W_{1, t_{n+1}} - W_{1, t_n} \right)
+$$
+
+$$
+Y_{t_{n+1}} \approx Y_{t_n} + a_2(X_{t_n}, Y_{t_n}, t_n) \Delta t + b_2(X_{t_n}, Y_{t_n}, t_n) \left( W_{2, t_{n+1}} - W_{2, t_n} \right)
+$$
+
+在这些更新中，$$W_{1, t_{n+1}} - W_{1, t_n}$$和$$W_{2, t_{n+1}} - W_{2, t_n}$$表示在时间间隔$$\Delta t$$内维纳过程的增量。这些增量是独立且正态分布的，具体为：
+$$
+W_{1, t_{n+1}} - W_{1, t_n} \sim \mathcal{N}(0, \Delta t)
+$$
+
+$$
+W_{2, t_{n+1}} - W_{2, t_n} \sim \mathcal{N}(0, \Delta t)
+$$
+
+因此，为了进行模拟，我们在每个时间步长生成这些正态分布的独立随机样本。如果我们进行$$M$$次独立的模拟（也称为样本路径或轨迹），我们生成一个路径集合$$\{(X_t^m, Y_t^m): t = 0, \Delta t, 2\Delta t, \ldots, T, m = 1, 2, \ldots, M\}$$。分析这些路径可以提供系统行为的统计信息。
+
+例如，系统状态在时间$$t$$的函数$$g(X_t, Y_t)$$的期望值可以通过蒙特卡洛估计近似为：
+$$
+\mathbb{E}[g(X_t, Y_t)] \approx \frac{1}{M} \sum_{m=1}^M g(X_t^m, Y_t^m)
+$$
+
+这种方法的优雅和强大之处在于其概率性质。通过平均许多实现结果，我们可以近似期望值，并构建直方图或核密度估计来经验性地近似概率密度函数$$p(x, y, t)$$。当我们对单个轨迹的行为感兴趣或系统具有高维度或复杂动态，使其他方法具有挑战性时，这种方法特别有用。”
+
+欧拉格雷夫教授点头，然后示意有限差分博士。“谢谢你，蒙特卡洛博士。萨缪尔，你的专长在于确定性数值方法。你将如何使用有限差分方法（FDM）来解决相应的福克-普朗克方程？”
+
+有限差分博士上前一步。“谢谢你，欧拉格雷夫教授。确实，福克-普朗克方程是一个偏微分方程，我们可以使用有限差分方法数值近似其解。为此，我们首先需要在空间和时间上离散化连续域。让我们考虑一个有限离散网格，用于$$x$$和$$y$$，以及时间离散化。
+
+让我们将空间步长表示为$$\Delta x$$和$$\Delta y$$，时间步长表示为$$\Delta t$$。我们通过网格点上的值$$p_{i,j}^n \approx p(x_i, y_j, t_n)$$来近似连续概率密度函数$$p(x, y, t)$$，其中$$x_i = x_0 + i \Delta x$$，$$y_j = y_0 + j \Delta y$$，$$t_n = n \Delta t$$，$$i, j$$是空间索引，$$n$$是时间索引。
+
+我们将用有限差分近似值代替福克-普朗克方程中的导数。让我们在二维福克-普朗克方程的上下文中分别看一下每个项：
+
+1. **时间导数**$$\frac{\partial p}{\partial t}$$：
+   我们可以用前向差分来近似这个：
+   $$
+   \frac{\partial p}{\partial t} \bigg|_{i,j}^n \approx \frac{p_{i,j}^{n+1} - p_{i,j}^n}{\Delta t}
+   $$
+
+2. **对流项**：
+   $$
+   - \frac{\partial}{\partial x} \left[ a_1(x, y, t) p(x, y, t) \right] \bigg|_{i,j}^n
+   $$
+   和
+   $$
+   - \frac{\partial}{\partial y} \left[ a_2(x, y, t) p(x, y, t) \right] \bigg|_{i,j}^n
+   $$
+   我们可以用后向差分来近似空间导数，以保持稳定性。因此，
+   $$
+   - \frac{\partial}{\partial x} \left[ a_1 p \right] \bigg|_{i,j}^n \approx - \frac{ \left( a_1 p \right)_{i,j}^n - \left( a_1 p \right)_{i-1,j}^n }{\Delta x}
+   $$
+   类似地，
+   $$
+   - \frac{\partial}{\partial y} \left[ a_2 p \right] \bigg|_{i,j}^n \approx - \frac{ \left( a_2 p \right)_{i,j}^n - \left( a_2 p \right)_{i,j-1}^n }{\Delta y}
+   $$
+
+3. **扩散项**：
+   首先，让我们看一下纯扩散项：
+   $$
+   \frac{\partial^2}{\partial x^2} \left[ \frac{b_1^2}{2} p(x, y, t) \right] \bigg|_{i,j}^n
+   $$
+   和
+   $$
+   \frac{\partial^2}{\partial y^2} \left[ \frac{b_2^2}{2} p(x, y, t) \right] \bigg|_{i,j}^n.
+   $$
+   我们可以用中心差分近似来近似二阶导数。对于第一项，我们有：
+   $$
+   \frac{\partial^2}{\partial x^2} \left[ \frac{b_1^2}{2} p \right] \bigg|_{i,j}^n \approx \frac{ \left( \frac{b_1^2}{2} p \right)_{i+1,j}^n - 2 \left( \frac{b_1^2}{2} p \right)_{i,j}^n + \left( \frac{b_1^2}{2} p \right)_{i-1,j}^n}{(\Delta x)^2}
+   $$
+   对于$$y$$方向的扩散项类似：
+   $$
+   \frac{\partial^2}{\partial y^2} \left[ \frac{b_2^2}{2} p \right] \bigg|_{i,j}^n \approx \frac{ \left( \frac{b_2^2}{2} p \right)_{i,j+1}^n - 2 \left( \frac{b_2^2}{2} p \right)_{i,j}^n + \left( \frac{b_2^2}{2} p \right)_{i,j-1}^n}{(\Delta y)^2}
+   $$
+
+4. **混合导数/交叉扩散项**：
+   $$
+   \frac{\partial^2}{\partial x \partial y} \left[ b_1 b_2 p(x, y, t) \right] \bigg|_{i,j}^n
+   $$
+   这个项可以用$$x$$和$$y$$方向上的中心差分来近似。我们有：
+   $$
+   \frac{\partial^2}{\partial x \partial y} \left[ b_1 b_2 p \right] \bigg|_{i,j}^n \approx \frac{ \left( b_1 b_2 p \right)_{i+1,j+1}^n - \left( b_1 b_2 p \right)_{i+1,j-1}^n - \left( b_1 b_2 p \right)_{i-1,j+1}^n + \left( b_1 b_2 p \right)_{i-1,j-1}^n }{4 \Delta x \Delta y}
+   $$
+
+将所有项放在一起，离散化的福克-普朗克方程在网格点$$(i,j)$$和时间步长$$n$$处为：
+$$
+\frac{p_{i,j}^{n+1} - p_{i,j}^n}{\Delta t} = - \frac{ \left( a_1 p \right)_{i,j}^n - \left( a_1 p \right)_{i-1,j}^n }{\Delta x} - \frac{ \left( a_2 p \right)_{i,j}^n - \left( a_2 p \right)_{i,j-1}^n }{\Delta y} + \frac{ \left( \frac{b_1^2}{2} p \right)_{i+1,j}^n - 2 \left( \frac{b_1^2}{2} p \right)_{i,j}^n + \left( \frac{b_1^2}{2} p \right)_{i-1,j}^n}{(\Delta x)^2} + \frac{ \left( \frac{b_2^2}{2} p \right)_{i,j+1}^n - 2 \left( \frac{b_2^2}{2} p \right)_{i,j}^n + \left( \frac{b_2^2}{2} p \right)_{i,j-1}^n}{(\Delta y)^2} + \frac{ \left( b_1 b_2 p \right)_{i+1,j+1}^n - \left( b_1 b_2 p \right)_{i+1,j-1}^n - \left( b_1 b_2 p \right)_{i-1,j+1}^n + \left( b_1 b_2 p \right)_{i-1,j-1}^n }{4 \Delta x \Delta y}
+$$
+
+解出未来时间步长$$p_{i,j}^{n+1}$$，我们得到：
+$$
+p_{i,j}^{n+1} = p_{i,j}^n + \Delta t \left[ - \frac{ \left( a_1 p \right)_{i,j}^n - \left( a_1 p \right)_{i-1,j}^n }{\Delta x} - \frac{ \left( a_2 p \right)_{i,j}^n - \left( a_2 p \right)_{i,j-1}^n }{\Delta y} + \frac{ \left( \frac{b_1^2}{2} p \right)_{i+1,j}^n - 2 \left( \frac{b_1^2}{2} p \right)_{i,j}^n + \left( \frac{b_1^2}{2} p \right)_{i-1,j}^n}{(\Delta x)^2} + \frac{ \left( \frac{b_2^2}{2} p \right)_{i,j+1}^n - 2 \left( \frac{b_2^2}{2} p \right)_{i,j}^n + \left( \frac{b_2^2}{2} p \right)_{i,j-1}^n}{(\Delta y)^2} + \frac{ \left( b_1 b_2 p \right)_{i+1,j+1}^n - \left( b_1 b_2 p \right)_{i+1,j-1}^n - \left( b_1 b_2 p \right)_{i-1,j+1}^n + \left( b_1 b_2 p \right)_{i-1,j-1}^n }{4 \Delta x \Delta y} \right]
+$$
+
+这个公式提供了一种在时间步长从$$t_n$$到$$t_{n+1}$$时更新空间网格上概率密度的方法。为了继续，我们需要初始条件$$p_{i,j}^0 = p(x_i, y_j, 0)$$，表示初始时间$$t = 0$$时的概率密度分布，并且可能需要根据$$x$$和$$y$$的域来指定边界条件。
+
+值得注意的是，有限差分方案的稳定性和准确性将取决于$$\Delta x$$、$$\Delta y$$和$$\Delta t$$的选择。推荐使用诸如冯·诺伊曼稳定性分析等技术进行仔细分析，以确保数值方法对于具体问题是稳定的和收敛的。”
+      基于以上，生成一个 2D 动画，同时用 monte carlo 仿真 SDE（以点表示），和用 FDM 仿真对应的 PDF（以颜色表示 prob. density）。
+输出 single-file html. Answer in English.
+      */
+        // Dimensions and setup
+        const margin = { top: 20, right: 20, bottom: 30, left: 40 };
+        const width = 400 - margin.left - margin.right;
+        const height = 400 - margin.top - margin.bottom;
+        
+        // Size of grid for FDM
+        const nx = 50;
+        const ny = 50;
+        const dx = width / nx;
+        const dy = height / ny;
+        
+        // Domain bounds
+        const xMin = -5;
+        const xMax = 5;
+        const yMin = -5;
+        const yMax = 5;
+        
+        // Create scales for both visualizations
+        const xScale = d3.scaleLinear()
+            .domain([xMin, xMax])
+            .range([0, width]);
+        
+        const yScale = d3.scaleLinear()
+            .domain([yMin, yMax])
+            .range([height, 0]);
+        
+        // Monte Carlo SVG setup
+        const mcSvg = d3.select("#monte-carlo")
+            .append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+        
+        // Add axes to Monte Carlo plot
+        mcSvg.append("g")
+            .attr("transform", `translate(0,${height})`)
+            .call(d3.axisBottom(xScale));
+        
+        mcSvg.append("g")
+            .call(d3.axisLeft(yScale));
+        
+        // FDM SVG setup
+        const fdmSvg = d3.select("#fdm-grid")
+            .append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+        
+        // Add axes to FDM plot
+        fdmSvg.append("g")
+            .attr("transform", `translate(0,${height})`)
+            .call(d3.axisBottom(xScale));
+        
+        fdmSvg.append("g")
+            .call(d3.axisLeft(yScale));
+        
+        // Create tooltip for FDM grid
+        const tooltip = d3.select("#fdm-grid")
+            .append("div")
+            .attr("class", "tooltip");
+        
+        // Create color scale for FDM density
+        const colorScale = d3.scaleSequential(d3.interpolateViridis)
+            .domain([0, 1]);
+        
+        // Simulation parameters
+        let simulationRunning = false;
+        let simulationInterval;
+        let particles = [];
+        let fdmGrid = Array(nx).fill().map(() => Array(ny).fill(0));
+        let dt = 0.05; // Time step
+        
+        // SDE coefficients
+        let a1, a2, b1, b2;
+        
+        // UI elements
+        const startButton = document.getElementById("start-button");
+        const pauseButton = document.getElementById("pause-button");
+        const resetButton = document.getElementById("reset-button");
+        const sdeTypeSelect = document.getElementById("sde-type");
+        const numParticlesInput = document.getElementById("num-particles");
+        const numParticlesValue = document.getElementById("particles-value");
+        const diffusionInput = document.getElementById("diffusion");
+        const diffusionValue = document.getElementById("diffusion-value");
+        const driftInput = document.getElementById("drift");
+        const driftValue = document.getElementById("drift-value");
+        const parameterDisplay = document.getElementById("parameter-display");
+        
+        // Event listeners
+        startButton.addEventListener("click", startSimulation);
+        pauseButton.addEventListener("click", pauseSimulation);
+        resetButton.addEventListener("click", resetSimulation);
+        sdeTypeSelect.addEventListener("change", updateSdeType);
+        numParticlesInput.addEventListener("input", function() {
+            numParticlesValue.textContent = this.value;
+        });
+        diffusionInput.addEventListener("input", function() {
+            diffusionValue.textContent = this.value;
+            updateSdeParameters();
+        });
+        driftInput.addEventListener("input", function() {
+            driftValue.textContent = this.value;
+            updateSdeParameters();
+        });
+        
+        // Initialize simulation
+        resetSimulation();
+        updateSdeType();
+        
+        // Function to set SDE coefficients based on the selected type
+        function updateSdeType() {
+            const sdeType = sdeTypeSelect.value;
+            const diffusion = parseFloat(diffusionInput.value);
+            const drift = parseFloat(driftInput.value);
+            
+            switch(sdeType) {
+                case "ornstein-uhlenbeck":
+                    a1 = (x, y) => -drift * x;
+                    a2 = (x, y) => -drift * y;
+                    b1 = (x, y) => diffusion;
+                    b2 = (x, y) => diffusion;
+                    parameterDisplay.innerHTML = `Ornstein-Uhlenbeck Process: <br>dX = -${drift.toFixed(1)}X dt + ${diffusion.toFixed(1)} dW₁, <br>dY = -${drift.toFixed(1)}Y dt + ${diffusion.toFixed(1)} dW₂`;
+                    break;
+                case "geometric-brownian":
+                    a1 = (x, y) => drift * x;
+                    a2 = (x, y) => drift * y;
+                    b1 = (x, y) => diffusion * Math.abs(x);
+                    b2 = (x, y) => diffusion * Math.abs(y);
+                    parameterDisplay.innerHTML = `Geometric Brownian Motion: <br>dX = ${drift.toFixed(1)}X dt + ${diffusion.toFixed(1)}|X| dW₁, <br>dY = ${drift.toFixed(1)}Y dt + ${diffusion.toFixed(1)}|Y| dW₂`;
+                    break;
+                case "double-well":
+                    a1 = (x, y) => drift * x * (1 - x * x / 4);
+                    a2 = (x, y) => drift * y * (1 - y * y / 4);
+                    b1 = (x, y) => diffusion;
+                    b2 = (x, y) => diffusion;
+                    parameterDisplay.innerHTML = `Double Well Potential: <br>dX = ${drift.toFixed(1)}X(1-X²/4) dt + ${diffusion.toFixed(1)} dW₁, <br>dY = ${drift.toFixed(1)}Y(1-Y²/4) dt + ${diffusion.toFixed(1)} dW₂`;
+                    break;
+            }
+            
+            resetSimulation();
+        }
+        
+        function updateSdeParameters() {
+            updateSdeType(); // Reuse this function to update parameters
+        }
+        
+        // Initialize particles and FDM grid
+        function resetSimulation() {
+            const numParticles = parseInt(numParticlesInput.value);
+            
+            // Initialize particles with Gaussian distribution
+            particles = [];
+            for (let i = 0; i < numParticles; i++) {
+                const x = randomGaussian(0, 1);
+                const y = randomGaussian(0, 1);
+                particles.push({ x, y });
+            }
+            
+            // Initialize FDM grid with Gaussian distribution
+            const sigma = 1.0;
+            const norm = 1 / (2 * Math.PI * sigma * sigma);
+            
+            for (let i = 0; i < nx; i++) {
+                fdmGrid[i] = [];
+                for (let j = 0; j < ny; j++) {
+                    const x = xMin + (xMax - xMin) * i / nx;
+                    const y = yMin + (yMax - yMin) * j / ny;
+                    fdmGrid[i][j] = norm * Math.exp(-(x * x + y * y) / (2 * sigma * sigma));
+                }
+            }
+            
+            // Normalize FDM grid
+            normalizeGrid();
+            
+            // Render initial state
+            renderMonteCarloParticles();
+            renderFdmGrid();
+            
+            // Reset UI
+            if (simulationRunning) {
+                clearInterval(simulationInterval);
+                simulationRunning = false;
+                startButton.disabled = false;
+                pauseButton.disabled = true;
+            }
+        }
+        
+        // Start simulation
+        function startSimulation() {
+            if (!simulationRunning) {
+                simulationRunning = true;
+                startButton.disabled = true;
+                pauseButton.disabled = false;
+                
+                simulationInterval = setInterval(() => {
+                    updateSimulation();
+                    renderMonteCarloParticles();
+                    renderFdmGrid();
+                }, 50);
+            }
+        }
+        
+        // Pause simulation
+        function pauseSimulation() {
+            if (simulationRunning) {
+                simulationRunning = false;
+                clearInterval(simulationInterval);
+                startButton.disabled = false;
+                pauseButton.disabled = true;
+            }
+        }
+        
+        // Update simulation for one time step
+        function updateSimulation() {
+            // Update Monte Carlo particles
+            updateMonteCarloParticles();
+            
+            // Update FDM grid
+            updateFdmGrid();
+        }
+        
+        // Update Monte Carlo particles using Euler-Maruyama method
+        function updateMonteCarloParticles() {
+            particles.forEach(particle => {
+                const dW1 = randomGaussian(0, Math.sqrt(dt));
+                const dW2 = randomGaussian(0, Math.sqrt(dt));
+                
+                const drift_x = a1(particle.x, particle.y) * dt;
+                const drift_y = a2(particle.x, particle.y) * dt;
+                
+                const diffusion_x = b1(particle.x, particle.y) * dW1;
+                const diffusion_y = b2(particle.x, particle.y) * dW2;
+                
+                particle.x += drift_x + diffusion_x;
+                particle.y += drift_y + diffusion_y;
+                
+                // Keep particles within bounds
+                particle.x = Math.max(xMin, Math.min(xMax, particle.x));
+                particle.y = Math.max(yMin, Math.min(yMax, particle.y));
+            });
+        }
+        
+        // Update FDM grid using finite difference method for Fokker-Planck equation
+        function updateFdmGrid() {
+            // Create a copy of the current grid
+            const newGrid = fdmGrid.map(row => [...row]);
+            
+            const dx = (xMax - xMin) / nx;
+            const dy = (yMax - yMin) / ny;
+            
+            // Apply finite difference method
+            for (let i = 1; i < nx - 1; i++) {
+                for (let j = 1; j < ny - 1; j++) {
+                    const x = xMin + (xMax - xMin) * i / nx;
+                    const y = yMin + (yMax - yMin) * j / ny;
+                    
+                    // Calculate coefficients at this point
+                    const a1_val = a1(x, y);
+                    const a2_val = a2(x, y);
+                    const b1_val = b1(x, y);
+                    const b2_val = b2(x, y);
+                    
+                    // Drift terms (first derivatives)
+                    const dx_term = -a1_val * (fdmGrid[i+1][j] - fdmGrid[i-1][j]) / (2 * dx);
+                    const dy_term = -a2_val * (fdmGrid[i][j+1] - fdmGrid[i][j-1]) / (2 * dy);
+                    
+                    // Diffusion terms (second derivatives)
+                    const dxx_term = (b1_val * b1_val / 2) * (fdmGrid[i+1][j] - 2 * fdmGrid[i][j] + fdmGrid[i-1][j]) / (dx * dx);
+                    const dyy_term = (b2_val * b2_val / 2) * (fdmGrid[i][j+1] - 2 * fdmGrid[i][j] + fdmGrid[i][j-1]) / (dy * dy);
+                    
+                    // Update grid with Euler forward method
+                    newGrid[i][j] = fdmGrid[i][j] + dt * (dx_term + dy_term + dxx_term + dyy_term);
+                    
+                    // Ensure non-negative values
+                    newGrid[i][j] = Math.max(0, newGrid[i][j]);
+                }
+            }
+            
+            // Update grid with new values
+            fdmGrid = newGrid;
+            
+            // Normalize grid
+            normalizeGrid();
+        }
+        
+        // Normalize FDM grid so probabilities sum to 1
+        function normalizeGrid() {
+            // Calculate total probability
+            let total = 0;
+            for (let i = 0; i < nx; i++) {
+                for (let j = 0; j < ny; j++) {
+                    total += fdmGrid[i][j];
+                }
+            }
+            
+            // Normalize
+            const area = (xMax - xMin) * (yMax - yMin) / (nx * ny);
+            for (let i = 0; i < nx; i++) {
+                for (let j = 0; j < ny; j++) {
+                    fdmGrid[i][j] = fdmGrid[i][j] / (total * area);
+                }
+            }
+        }
+        
+        // Render Monte Carlo particles
+        function renderMonteCarloParticles() {
+            // Draw particles
+            const circles = mcSvg.selectAll("circle")
+                .data(particles);
+            
+            circles.enter()
+                .append("circle")
+                .attr("r", 2)
+                .attr("fill", "rgba(0, 0, 255, 0.5)")
+                .merge(circles)
+                .attr("cx", d => xScale(d.x))
+                .attr("cy", d => yScale(d.y));
+            
+            circles.exit().remove();
+        }
+        
+        // Render FDM grid
+        function renderFdmGrid() {
+            // Find maximum value in grid for color scaling
+            let maxValue = 0;
+            for (let i = 0; i < nx; i++) {
+                for (let j = 0; j < ny; j++) {
+                    maxValue = Math.max(maxValue, fdmGrid[i][j]);
+                }
+            }
+            
+            // Update color scale domain
+            colorScale.domain([0, maxValue]);
+            
+            // Draw grid cells
+            for (let i = 0; i < nx; i++) {
+                for (let j = 0; j < ny; j++) {
+                    const x = i * dx;
+                    const y = j * dy;
+                    const value = fdmGrid[i][j];
+                    
+                    // Check if rect already exists
+                    let rect = fdmSvg.select(`rect.cell-${i}-${j}`);
+                    
+                    if (rect.empty()) {
+                        // Create new rect
+                        rect = fdmSvg.append("rect")
+                            .attr("class", `cell-${i}-${j}`)
+                            .attr("x", x)
+                            .attr("y", y)
+                            .attr("width", dx)
+                            .attr("height", dy)
+                            .on("mouseover", function(event) {
+                                const gridX = xMin + (xMax - xMin) * i / nx;
+                                const gridY = yMin + (yMax - yMin) * j / ny;
+                                
+                                tooltip.html(`Position: (${gridX.toFixed(2)}, ${gridY.toFixed(2)})<br>Density: ${value.toFixed(6)}`)
+                                    .style("left", `${event.pageX + 10}px`)
+                                    .style("top", `${event.pageY - 20}px`)
+                                    .style("opacity", 0.9);
+                            })
+                            .on("mouseout", function() {
+                                tooltip.style("opacity", 0);
+                            });
+                    }
+                    
+                    // Update rect color
+                    rect.attr("fill", colorScale(value));
+                }
+            }
+        }
+        
+        // Utility function for random normal distribution
+        function randomGaussian(mean, stdev) {
+            let u = 0, v = 0;
+            while (u === 0) u = Math.random();
+            while (v === 0) v = Math.random();
+            let z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+            return mean + z * stdev;
+        }
+    </script>
+</body>
+</html>
