@@ -89,6 +89,7 @@
 </div>
 
 <script>
+    // single-file html 实现用 2D ising model 给二值图像去噪，求解包括 vanila 和 Hamiltonian Monte Carlo  两个变体。题目用英文字母汉字加上随机噪声生成（噪声程度可控），作为 ising model 的 external potential。所有求解在后台无可视化快速进行，但存下中间结果可以变成动画回放。
     // --- DOM Elements ---
     const inputText = document.getElementById('inputText');
     const canvasSizeInput = document.getElementById('canvasSize');
