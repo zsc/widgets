@@ -94,6 +94,7 @@
     </div>
 
     <script>
+        // single-file html 实现一个 2D Gaussian splatting 来近似一张给定灰度图，给定灰度图由英文汉字组成（用户可改），有按钮启动 spaltting 的优化（优化用 MH-MCMC）。超参界面上可设。
         const targetCanvas = document.getElementById('targetCanvas');
         const splatCanvas = document.getElementById('splatCanvas');
         const targetCtx = targetCanvas.getContext('2d');
