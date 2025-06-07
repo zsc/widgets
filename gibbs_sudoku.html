@@ -91,6 +91,7 @@
     </div>
 
     <script>
+        // single-file html 实现用 gibbs sampling 搭配 MH 条件解数独。选择更新项时优先选 conflict 多和最近未更新的（但所有的都有概率），每个 cell 进行 gibbs sampling 时的概率按 exp(-\beta effective-conflict-number)，effective-conflict-number 是 propose 的更新后所有 source（棋盘上其他 cell）贡献的 conflict-number 按 source 的 exp(- \beta source-conflict-number) 加权。conflict-number 计算要 solid。数独题目随机生成。求解在后台进行，但存下中间结果可以变成动画回放。超参界面可调。用颜色区分不同种类的 conflict。
         const GRID_SIZE = 9;
         const BLOCK_SIZE = 3;
         const gridContainer = document.getElementById('grid-container');
